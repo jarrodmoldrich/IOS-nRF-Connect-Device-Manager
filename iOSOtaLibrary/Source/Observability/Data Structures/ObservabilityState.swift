@@ -100,7 +100,7 @@ extension ObservabilityState {
     }
     
     static func writeToDisk(url: URL, copy: Self) {
-        Task.detached(name: "writeToDisk", priority: .utility) {
+        Task.detached(priority: .utility) {
             guard let data = try? JSONEncoder().encode(copy) else { return }
             do {
                 let urlDirectory = url.deletingLastPathComponent()

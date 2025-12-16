@@ -11,11 +11,11 @@ import SwiftCBOR
 // MARK: - FileSystemManager
 
 public class FileSystemManager: McuManager {
-    
+
     public override class var TAG: McuMgrLogCategory { .filesystemManager }
-    
+
     // MARK: IDs
-    
+
     enum FilesystemID: UInt8 {
         case file = 0
         case status = 1
@@ -23,15 +23,15 @@ public class FileSystemManager: McuManager {
         case supportedHashChecksum = 3
         case closeFile = 4
     }
-    
+
     // MARK: init
-    
+
     public init(transport: McuMgrTransport) {
         super.init(group: McuMgrGroup.filesystem, transport: transport)
     }
-    
+
     // MARK: Download
-    
+
     /// Requests the next packet of data from given offset.
     /// To download a complete file, use download(name:delegate) method instead.
     ///
@@ -46,9 +46,9 @@ public class FileSystemManager: McuManager {
         // Build request and send.
         send(op: .read, commandId: FilesystemID.file, payload: payload, callback: callback)
     }
-    
+
     // MARK: Upload
-    
+
     /// **NOTE**: To send a complete file, use **upload(name:data:using:delegate)** API instead.
     ///
     /// Sends the next packet of data from given offset. It is part of the original API surface, hence
@@ -72,7 +72,7 @@ public class FileSystemManager: McuManager {
             transferState = .uploading
         }
         objc_sync_exit(self)
-        
+
         self.uploadDelegate = self.uploadDelegate ?? uploadDelegate
         uploadConfiguration = uploadConfiguration ?? configuration
         guard uploadConfiguration != nil else {
@@ -82,14 +82,14 @@ public class FileSystemManager: McuManager {
             cancelTransfer(error: error)
             return
         }
-        
+
         // Calculate the number of remaining bytes.
         let remainingBytes = UInt(data.count) - offset
-        
+
         // Data length to end is the minimum of the max data length and the
         // number of remaining bytes.
         let packetOverhead = calculatePacketOverhead(for: name, data: data, offset: UInt64(offset))
-        
+
         // Get the length of file data to send.
         let maxReassemblySize = min(uploadConfiguration.reassemblyBufferSize, UInt64(UInt16.max))
         let maxPacketSize = max(maxReassemblySize, UInt64(transport.mtu))
@@ -98,7 +98,7 @@ public class FileSystemManager: McuManager {
             maxDataLength = (maxDataLength / uploadConfiguration.byteAlignment.rawValue) * uploadConfiguration.byteAlignment.rawValue
         }
         let dataLength = min(UInt(maxDataLength), remainingBytes)
-        
+
         // Build the request payload.
         var payload: [String: CBOR] = ["name": CBOR.utf8String(name),
                                        "data": CBOR.byteString([UInt8](data[offset..<(offset+dataLength)])),
@@ -110,9 +110,9 @@ public class FileSystemManager: McuManager {
         // Build request and send.
         send(op: .write, commandId: FilesystemID.file, payload: payload, callback: callback)
     }
-    
+
     // MARK: download(name:delegate:)
-    
+
     /// Begins the file download from a peripheral.
     ///
     /// An instance of FileSystemManager can only have one transfer in progress
@@ -138,26 +138,26 @@ public class FileSystemManager: McuManager {
             return false
         }
         objc_sync_exit(self)
-        
+
         verifyOnMainThread()
-        
+
         // Set download delegate.
         downloadDelegate = delegate
-        
+
         // Set file data.
         fileName = name
         fileData = nil
-        
+
         // Grab a strong reference to something holding a strong reference to self.
         cyclicReferenceHolder = { return self }
-        
+
         log(msg: "Downloading \(name)...", atLevel: .application)
         download(name: name, offset: 0, callback: downloadCallback)
         return true
     }
-    
+
     // MARK: upload(name:data:using:delegate:)
-    
+
     /// Begins the file upload to a peripheral.
     ///
     /// An instance of FileSystemManager can only have one upload in progress at a
@@ -184,36 +184,36 @@ public class FileSystemManager: McuManager {
             return false
         }
         objc_sync_exit(self)
-        
+
         verifyOnMainThread()
-        
+
         // Set upload delegate.
         uploadDelegate = delegate
-        
+
         // Set file data.
         fileName = name
         fileData = data
         fileSize = nil
-        
+
         // Note that pipelining requires the use of byte-alignment, otherwise we
         // can't predict how many bytes the firmware will accept in each chunk.
         uploadConfiguration = configuration
         uploadConfiguration.reassemblyBufferSize = min(uploadConfiguration.reassemblyBufferSize, UInt64(UInt16.max))
         uploadPipeline = McuMgrUploadPipeline(adopting: uploadConfiguration, over: transport)
-        if let bleTransport = transport as? McuMgrBleTransport {
+        if let bleTransport = transport as? McuMgrBleTransportProtocol {
             bleTransport.numberOfParallelWrites = uploadPipeline.depth
             bleTransport.chunkSendDataToMtuSize = uploadConfiguration.reassemblyBufferSize > bleTransport.mtu
         }
-        
+
         // Grab a strong reference to something holding a strong reference to self.
         cyclicReferenceHolder = { return self }
-        
+
         requestMcuMgrParameters()
         return true
     }
-    
+
     // MARK: Status
-    
+
     /// Retrieve status of an existing file from specified path of a target device.
     ///
     /// - parameter name: The file name.
@@ -222,9 +222,9 @@ public class FileSystemManager: McuManager {
         let payload: [String: CBOR] = ["name": CBOR.utf8String(name)]
         send(op: .read, commandId: FilesystemID.status, payload: payload, callback: callback)
     }
-    
+
     // MARK: CRC32
-    
+
     /// Generate a checksum of an existing file at a specified path on a target.
     ///
     /// - parameter name: The file name.
@@ -244,9 +244,9 @@ public class FileSystemManager: McuManager {
         }
         send(op: .read, commandId: FilesystemID.hashChecksum, payload: payload, callback: callback)
     }
-    
+
     // MARK: SHA256
-    
+
     /// Generate a checksum of an existing file at a specified path on a target.
     ///
     /// - parameter name: The file name.
@@ -266,18 +266,18 @@ public class FileSystemManager: McuManager {
         }
         send(op: .read, commandId: FilesystemID.hashChecksum, payload: payload, callback: callback)
     }
-    
+
     // MARK: closeAll
-    
+
     /// Close any open file handles held by `fs_mgmt` upload/download requests that might have stalled or be incomplete.
     ///
     /// - parameter callback: The callback.
     public func closeAll(name: String, callback: @escaping McuMgrCallback<McuMgrResponse>) {
         send(op: .write, commandId: FilesystemID.closeFile, payload: nil, callback: callback)
     }
-    
+
     // MARK: State
-    
+
     /// Image upload states
     public enum UploadState: UInt8 {
         case none             = 0
@@ -286,14 +286,14 @@ public class FileSystemManager: McuManager {
         case downloading      = 3
         case paused           = 4
     }
-    
+
     // MARK: Private Properties
-    
+
     /// State of the file upload.
     private var transferState: UploadState = .none
     /// Current file byte offset to send from.
     private var offset: UInt64 = 0
-    
+
     /// The file name.
     private var fileName: String?
     /// Contains the file data to send to the device.
@@ -304,13 +304,13 @@ public class FileSystemManager: McuManager {
     private weak var uploadDelegate: FileUploadDelegate?
     /**
      Groups multiple Settings regarding Upload, such as enabling Pipelining, Byte Alignment and/or SMP Reassembly.
-     
+
      This is not applied for Download, since it's up to the Sender to package/format the Data according to SMP specification.
      */
     private var uploadConfiguration: FirmwareUpgradeConfiguration!
-    
+
     private var uploadPipeline: McuMgrUploadPipeline!
-    
+
     /// Delegate to send file download updates to.
     private weak var downloadDelegate: FileDownloadDelegate?
     /**
@@ -324,15 +324,15 @@ public class FileSystemManager: McuManager {
      packet upload.
      */
     private var storedMcuMgrParametersResponse: McuMgrParametersResponse?
-    
+
     /// Cyclic reference is used to prevent from releasing the manager
     /// in the middle of an update. The reference cycle will be set
     /// when upload or download was started and released on success, error
     /// or cancel.
     private var cyclicReferenceHolder: (() -> FileSystemManager)?
-    
+
     // MARK: Cancel
-    
+
     /// Cancels the current transfer.
     ///
     /// If an error is supplied, the delegate's didFailUpload method will be
@@ -373,9 +373,9 @@ public class FileSystemManager: McuManager {
         }
         objc_sync_exit(self)
     }
-    
+
     // MARK: Pause
-    
+
     /// Pauses the current transfer. If there is no transfer in progress, nothing
     /// happens.
     public func pauseTransfer() {
@@ -389,9 +389,9 @@ public class FileSystemManager: McuManager {
         }
         objc_sync_exit(self)
     }
-    
+
     // MARK: Continue
-    
+
     /// Continues a paused transfer. If the transfer is not paused or not uploading,
     /// nothing happens.
     public func continueTransfer() {
@@ -410,24 +410,24 @@ public class FileSystemManager: McuManager {
         }
         objc_sync_exit(self)
     }
-    
+
     // MARK: mcuMgrParameters Callback
-    
+
     private lazy var mcuManagerParametersCallback: McuMgrCallback<McuMgrParametersResponse> = { [weak self] response, error in
         guard let self else { return }
-        
+
         guard error == nil, let response, response.rc.isSupported() else {
             self.log(msg: "Mcu Manager parameters not supported.", atLevel: .warning)
             self.finishedMcuMgrParametersRequest() // Proceed to upload.
             return
         }
-        
+
         self.receivedMcuMgrParametersResponse(response)
         self.finishedMcuMgrParametersRequest()
     }
-    
+
     // MARK: uploadCallback
-    
+
     private lazy var uploadCallback: McuMgrCallback<McuMgrFsUploadResponse> = {
         [weak self] (response: McuMgrFsUploadResponse?, error: Error?) in
         // Ensure the manager is not released.
@@ -448,19 +448,19 @@ public class FileSystemManager: McuManager {
             self.cancelTransfer(error: error)
             return
         }
-        
+
         // Make sure the file data is set.
         guard let fileName, let fileData else {
             self.cancelTransfer(error: FileTransferError.invalidData)
             return
         }
-        
+
         // Make sure the response is not nil.
         guard let response else {
             self.cancelTransfer(error: FileTransferError.invalidPayload)
             return
         }
-        
+
         // Check for an error return code.
         if let error = response.getError() {
             guard let groupError = response.groupRC?.groupError() as? FileSystemManagerError else {
@@ -470,7 +470,7 @@ public class FileSystemManager: McuManager {
             self.cancelTransfer(error: groupError)
             return
         }
-        
+
         // Get the offset from the response.
         if let offset = response.off {
             // if 'first successful sequenceNumber upload'
@@ -484,7 +484,7 @@ public class FileSystemManager: McuManager {
             self.uploadDelegate?.uploadProgressDidChange(bytesSent: Int(offset),
                                                          fileSize: fileData.count,
                                                          timestamp: Date())
-            
+
             if self.transferState == .none {
                 self.log(msg: "Upload cancelled", atLevel: .application)
                 self.resetTransfer()
@@ -494,7 +494,7 @@ public class FileSystemManager: McuManager {
                 self.cyclicReferenceHolder = nil
                 return
             }
-            
+
             // Check if the upload has completed.
             if offset >= fileData.count {
                 self.log(msg: "Upload finished", atLevel: .application)
@@ -516,9 +516,9 @@ public class FileSystemManager: McuManager {
             self.cancelTransfer(error: ImageUploadError.invalidPayload)
         }
     }
-    
+
     // MARK: downloadCallback
-    
+
     private lazy var downloadCallback: McuMgrCallback<McuMgrFsDownloadResponse> = {
         [weak self] (response: McuMgrFsDownloadResponse?, error: Error?) in
         // Ensure the manager is not released.
@@ -571,7 +571,7 @@ public class FileSystemManager: McuManager {
             self.downloadDelegate?.downloadProgressDidChange(bytesDownloaded: Int(self.offset),
                                                              fileSize: self.fileSize!,
                                                              timestamp: Date())
-            
+
             if self.transferState == .none {
                 self.log(msg: "Download cancelled", atLevel: .application)
                 self.resetTransfer()
@@ -581,7 +581,7 @@ public class FileSystemManager: McuManager {
                 self.cyclicReferenceHolder = nil
                 return
             }
-            
+
             // Check if the upload has completed.
             if self.offset >= self.fileSize! {
                 self.log(msg: "Download finished", atLevel: .application)
@@ -592,7 +592,7 @@ public class FileSystemManager: McuManager {
                 self.cyclicReferenceHolder = nil
                 return
             }
-            
+
             // Send the next packet of data.
             self.requestNext(from: UInt(self.offset))
         } else {
@@ -600,13 +600,13 @@ public class FileSystemManager: McuManager {
         }
     }
 }
- 
+
 // MARK: - Private
 
 private extension FileSystemManager {
-    
+
     // MARK: mcuMgrParameters
-    
+
     func requestMcuMgrParameters() {
         objc_sync_enter(self)
         log(msg: "Requesting McuMgr Parameters...", atLevel: .application)
@@ -616,14 +616,14 @@ private extension FileSystemManager {
         defaultManager.params(callback: mcuManagerParametersCallback)
         objc_sync_exit(self)
     }
-    
+
     func receivedMcuMgrParametersResponse(_ response: McuMgrParametersResponse) {
         log(msg: "Processing McuMgr Parameters Response.", atLevel: .debug)
-        guard let bleTransport = transport as? McuMgrBleTransport else {
+        guard let bleTransport = transport as? McuMgrBleTransportProtocol else {
             log(msg: "Ignoring McuMgr Parameters Response due to unsupported (non-BLE) Transport.", atLevel: .debug)
             return
         }
-        
+
         guard let bufferCount = response.bufferCount, var bufferSize = response.bufferSize else {
             self.log(msg: "Invalid McuMgr Parameters response received.", atLevel: .warning)
             storedMcuMgrParametersResponse = nil // just in case
@@ -632,7 +632,7 @@ private extension FileSystemManager {
         log(msg: "Mcu Manager parameters received (\(bufferCount) x \(bufferSize))", atLevel: .application)
         storedMcuMgrParametersResponse = response
         bufferSize = min(response.bufferSize, UInt64(UInt16.max))
-        
+
         // Guard against soft-lock on first sequenceNumber upload
         if bufferSize < transport.mtu {
             do {
@@ -647,17 +647,17 @@ private extension FileSystemManager {
             }
         }
     }
-    
+
     func patchReassemblyAndPipeliningSetup(using response: McuMgrParametersResponse) {
-        guard let bleTransport = transport as? McuMgrBleTransport else {
+        guard let bleTransport = transport as? McuMgrBleTransportProtocol else {
             log(msg: "Skipping \(#function) due to unsupported (non-Bluetooth LE) Transport.", atLevel: .debug)
             return
         }
-        
+
         let bufferSize: UInt64! = min(response.bufferSize, UInt64(UInt16.max))
         log(msg: "Setting SAR Buffer Size to \(bufferSize) bytes.", atLevel: .debug)
         uploadConfiguration.reassemblyBufferSize = bufferSize
-        
+
         if let bufferCount = response.bufferCount, uploadConfiguration.pipelineDepth >= bufferCount {
             log(msg: "Target pipeline depth of \(bufferCount - 1) is smaller than upload configuration of \(uploadConfiguration.pipelineDepth).", atLevel: .warning)
             uploadConfiguration.pipelineDepth = Int(bufferCount - 1)
@@ -665,13 +665,13 @@ private extension FileSystemManager {
             bleTransport.numberOfParallelWrites = uploadPipeline.depth
             log(msg: "Pipeline depth set to \(uploadPipeline.depth).", atLevel: .debug)
         }
-        
+
         if bufferSize > bleTransport.mtu, !bleTransport.chunkSendDataToMtuSize {
             log(msg: "Enabling SMP Reassembly.", atLevel: .debug)
             bleTransport.chunkSendDataToMtuSize = true
         }
     }
-    
+
     func finishedMcuMgrParametersRequest() {
         defaultManager = nil
         let fileName: String! = fileName
@@ -679,44 +679,44 @@ private extension FileSystemManager {
         log(msg: "Uploading \(fileName) (\(fileData.count) bytes)...", atLevel: .application)
         upload(name: fileName, data: fileData, offset: 0, callback: uploadCallback)
     }
-    
+
     // MARK: sendNext(from:)
-    
+
     func sendNext(from offset: UInt) {
         if transferState != .uploading {
             return
         }
         upload(name: fileName!, data: fileData!, offset: offset, callback: uploadCallback)
     }
-    
+
     // MARK: requestNext(from:)
-    
+
     func requestNext(from offset: UInt) {
         if transferState != .downloading {
             return
         }
         download(name: fileName!, offset: offset, callback: downloadCallback)
     }
-    
+
     // MARK: resetTransfer
-    
+
     private func resetTransfer() {
         objc_sync_enter(self)
         // Reset upload state.
         transferState = .none
-        
+
         // Deallocate and nil file data pointers.
         fileData = nil
         fileName = nil
         fileSize = nil
-        
+
         // Reset upload vars.
         offset = 0
         objc_sync_exit(self)
     }
-    
+
     // MARK: restartTransfer
-    
+
     private func restartTransfer() {
         objc_sync_enter(self)
         transferState = .none
@@ -728,13 +728,13 @@ private extension FileSystemManager {
         }
         objc_sync_exit(self)
     }
-    
+
     // MARK: Packet Calculation
-    
+
     private func calculatePacketOverhead(for name: String, data: Data, offset: UInt64) -> Int {
         let dataLength = UInt64(data.count)
         let payload = buildPayload(for: name, data: data, at: offset, with: dataLength)
-        
+
         // Build the packet and return the size.
         let packet = McuManager.buildPacket(scheme: transport.getScheme(), version: .SMPv2,
                                             op: .write, flags: 0, group: group.rawValue,
@@ -747,9 +747,9 @@ private extension FileSystemManager {
         }
         return packetOverhead
     }
-    
+
     // MARK: buildPayload(for:at:)
-    
+
     private func buildPayload(for name: String, data: Data, at offset: UInt64, with length: UInt64) -> [String: CBOR] {
         // Get the Mcu Manager header.
         var payload: [String: CBOR] = ["name": CBOR.utf8String(name),
@@ -770,7 +770,7 @@ public enum FileTransferError: Error, LocalizedError {
     case missingUploadConfiguration
     case invalidPayload
     case invalidData
-    
+
     public var errorDescription: String? {
         switch self {
         case .missingUploadConfiguration:
@@ -803,7 +803,7 @@ public enum FileSystemManagerError: UInt64, Error, LocalizedError {
     case mountingPointNotFound = 14
     case readOnlyFilesystem = 15
     case emptyFile = 16
-    
+
     public var errorDescription: String? {
         switch self {
         case .noError:
@@ -847,22 +847,22 @@ public enum FileSystemManagerError: UInt64, Error, LocalizedError {
 // MARK: - FileUploadDelegate
 
 public protocol FileUploadDelegate: AnyObject {
-    
+
     /// Called when a packet of file data has been sent successfully.
     ///
     /// - parameter bytesSent: The total number of file bytes sent so far.
     /// - parameter fileSize:  The overall size of the file being uploaded.
     /// - parameter timestamp: The time this response packet was received.
     func uploadProgressDidChange(bytesSent: Int, fileSize: Int, timestamp: Date)
-    
+
     /// Called when an file upload has failed.
     ///
     /// - parameter error: The error that caused the upload to fail.
     func uploadDidFail(with error: Error)
-    
+
     /// Called when the upload has been cancelled.
     func uploadDidCancel()
-    
+
     /// Called when the upload has finished successfully.
     func uploadDidFinish()
 }
@@ -870,22 +870,22 @@ public protocol FileUploadDelegate: AnyObject {
 // MARK: - FileDownloadDelegate
 
 public protocol FileDownloadDelegate: AnyObject {
-    
+
     /// Called when a packet of file data has been sent successfully.
     ///
     /// - parameter bytesDownloaded: The total number of file bytes received so far.
     /// - parameter fileSize:        The overall size of the file being downloaded.
     /// - parameter timestamp:       The time this response packet was received.
     func downloadProgressDidChange(bytesDownloaded: Int, fileSize: Int, timestamp: Date)
-    
+
     /// Called when an file download has failed.
     ///
     /// - parameter error: The error that caused the download to fail.
     func downloadDidFail(with error: Error)
-    
+
     /// Called when the download has been cancelled.
     func downloadDidCancel()
-    
+
     /// Called when the download has finished successfully.
     ///
     /// - parameter name: The file name.

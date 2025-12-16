@@ -443,7 +443,7 @@ public class FirmwareUpgradeManager: FirmwareUpgradeController, ConnectionObserv
         
         log(msg: "Reset into Firmware Loader Mode Command successful.", atLevel: .info)
         
-        guard let bleTransport = imageManager.transport as? McuMgrBleTransport else {
+        guard let bleTransport = imageManager.transport as? McuMgrBleTransportProtocol else {
             log(msg: "Reset into Firmware Loader Mode is only supported for Bluetooth LE Transport.", atLevel: .error)
             fail(error: FirmwareUpgradeError.unknown("Reset into Firmware Loader Mode is only supported for Bluetooth LE."))
             return

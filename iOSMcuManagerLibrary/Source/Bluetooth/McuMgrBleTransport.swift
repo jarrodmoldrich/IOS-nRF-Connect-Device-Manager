@@ -32,13 +32,37 @@ public protocol PeripheralDelegate: AnyObject {
     func peripheral(_ peripheral: CBPeripheral, didChangeStateTo state: PeripheralState)
 }
 
+// MARK: - McuMgrBleTransportProtocol
+
+/// Protocol exposing the BLE-specific transport properties used by other parts of the library.
+/// Extends `McuMgrTransport` to include BLE-specific functionality.
+public protocol McuMgrBleTransportProtocol: McuMgrTransport {
+    
+    /// The CBCentralManager instance from which the peripheral was obtained.
+    /// Used for operations like scanning for peripherals after reset.
+    var centralManager: CBCentralManager { get }
+    
+    /// Set to values larger than 1 to enable Parallel Writes.
+    ///
+    /// Features like SMP Pipelining are based on the concept of multiple packet transmissions happening
+    /// at the same time and waiting for their responses as they're received.
+    var numberOfParallelWrites: Int { get set }
+    
+    /// Enable when calling ``send(data: Data, timeout: Int, callback: @escaping McuMgrCallback<T>)``
+    /// with `Data` values larger than MTU Size, such as when SMP Reassembly feature is enabled.
+    ///
+    /// If the Data being sent is larger than the MTU Size, this property should be enabled so it's cut-down
+    /// to MTU Size so as to keep within each transmission packet's maximum (MTU) size limit.
+    var chunkSendDataToMtuSize: Bool { get set }
+}
+
 // MARK: - McuMgrBleTransport
 
-public class McuMgrBleTransport: NSObject {
+public class McuMgrBleTransport: NSObject, McuMgrBleTransportProtocol {
     
     /// The CBCentralManager instance from which the peripheral was obtained.
     /// This is used to connect and cancel connection.
-    internal let centralManager: CBCentralManager
+    public let centralManager: CBCentralManager
     /// The queue used to buffer requests when another one is in progress.
     private let operationQueue: OperationQueue
     /// Lock used to wait for callbacks before continuing the request. This lock

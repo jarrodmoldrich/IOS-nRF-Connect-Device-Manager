@@ -20,7 +20,7 @@ import CoreBluetooth
  understand anything.
  */
 public class McuMgrBleROBWriteBuffer {
-    
+
     /**
      The minimum amount of time we expect needs to elapse before the Write Without Response buffer is cleared in miliseconds.
 
@@ -46,7 +46,7 @@ public class McuMgrBleROBWriteBuffer {
     
     // MARK: init
     
-    init(_ log: McuMgrLogDelegate?) {
+    public init(_ log: McuMgrLogDelegate?) {
         self.log = log
         // Override for first packet we try to send.
         self.overridePeripheralNotReadyForWriteWithoutResponse = true
@@ -57,7 +57,7 @@ public class McuMgrBleROBWriteBuffer {
     
     // MARK: API
     
-    internal func isInFlight(_ sequenceNumber: McuSequenceNumber) -> Bool {
+    public func isInFlight(_ sequenceNumber: McuSequenceNumber) -> Bool {
         lock.sync { [unowned self] in
             return window.contains(where: {
                 $0.mcuMgrSequenceNumber == sequenceNumber
@@ -68,7 +68,7 @@ public class McuMgrBleROBWriteBuffer {
     /**
      All chunks of the same packet need to be sent together. Otherwise, they can't be merged properly on the receiving end.
      */
-    internal func enqueue(_ sequenceNumber: McuSequenceNumber, data: [Data], to peripheral: CBPeripheral, characteristic: CBCharacteristic, callback: @escaping (Data?, McuMgrTransportError?) -> Void) {
+    public func enqueue(_ sequenceNumber: McuSequenceNumber, data: [Data], to peripheral: CBPeripheral, characteristic: CBCharacteristic, callback: @escaping (Data?, McuMgrTransportError?) -> Void) {
         // Do not enqueue again if said sequence number is in-flight.
         guard !isInFlight(sequenceNumber) else {
             guard pausedWritesWithoutResponse else { return }
@@ -94,7 +94,7 @@ public class McuMgrBleROBWriteBuffer {
         }
     }
     
-    internal func peripheralReadyToWrite(_ peripheral: CBPeripheral) {
+    public func peripheralReadyToWrite(_ peripheral: CBPeripheral) {
         lock.async { [unowned self] in
             // Note: peripheralIsReady(toSendWriteWithoutResponse:) is called many times.
             // We only want to continue past this guard when a write was paused and

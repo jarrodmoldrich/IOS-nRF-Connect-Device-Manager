@@ -10,7 +10,7 @@ import Dispatch
 
 // MARK: - McuMgrBleTransportWrite
 
-typealias McuMgrBleTransportWrite = (sequenceNumber: McuSequenceNumber, writeLock: ResultLock,
+public typealias McuMgrBleTransportWrite = (sequenceNumber: McuSequenceNumber, writeLock: ResultLock,
                                      chunk: Data?, totalChunkSize: Int?)
 
 // MARK: - McuMgrBleTransportWriteState
@@ -25,14 +25,16 @@ public class McuMgrBleTransportWriteState {
     private var state = [UInt8: McuMgrBleTransportWrite]()
     
     // MARK: - APIs
-    
-    subscript(sequenceNumber: McuSequenceNumber) -> McuMgrBleTransportWrite? {
+
+    public init() {}
+
+    public subscript(sequenceNumber: McuSequenceNumber) -> McuMgrBleTransportWrite? {
         get {
             lockingQueue.sync { state[sequenceNumber] }
         }
     }
     
-    func newWrite(sequenceNumber: McuSequenceNumber, lock: ResultLock) {
+    public func newWrite(sequenceNumber: McuSequenceNumber, lock: ResultLock) {
         lockingQueue.async {
             // Either the Lock for a Sequence Number is Open, or there's no state for it.
             assert(self.state[sequenceNumber]?.writeLock.isOpen ?? true)
@@ -40,11 +42,11 @@ public class McuMgrBleTransportWriteState {
         }
     }
     
-    func sharedLock(_ writeClosure: @escaping () -> Void) {
+    public func sharedLock(_ writeClosure: @escaping () -> Void) {
         lockingQueue.async { writeClosure() }
     }
     
-    func received(sequenceNumber: McuSequenceNumber, data: Data) {
+    public func received(sequenceNumber: McuSequenceNumber, data: Data) {
         lockingQueue.async {
             if self.state[sequenceNumber]?.chunk == nil {
                 // If we do not have any current response data, this is the initial
@@ -74,7 +76,7 @@ public class McuMgrBleTransportWriteState {
      
      Returns: `true` if there's no state whatsoever for the given `McuSequenceNumber`, or there is state and we can verify the full chunk `Data` is present. `false` if otherwise, including if we have state for the `McuSequenceNumber`, but no chunk `Data` available or it's not complete yet.
      */
-    func isChunkComplete(for sequenceNumber: McuSequenceNumber) -> Bool {
+    public func isChunkComplete(for sequenceNumber: McuSequenceNumber) -> Bool {
         lockingQueue.sync {
             guard let chunkState = self.state[sequenceNumber] else { return true }
             
@@ -84,19 +86,19 @@ public class McuMgrBleTransportWriteState {
         }
     }
     
-    func open(sequenceNumber: McuSequenceNumber, dueTo error: McuMgrTransportError) {
+    public func open(sequenceNumber: McuSequenceNumber, dueTo error: McuMgrTransportError) {
         lockingQueue.async {
             self.state[sequenceNumber]?.writeLock.open(error)
         }
     }
     
-    func completedWrite(sequenceNumber: McuSequenceNumber) {
+    public func completedWrite(sequenceNumber: McuSequenceNumber) {
         lockingQueue.async {
             self.state[sequenceNumber] = nil
         }
     }
     
-    func onError(_ error: Error) {
+    public func onError(_ error: Error) {
         lockingQueue.async {
             self.state.forEach { _, value in
                 value.writeLock.open(error)
@@ -104,7 +106,7 @@ public class McuMgrBleTransportWriteState {
         }
     }
     
-    func onWriteError(sequenceNumber: McuSequenceNumber, error: Error) {
+    public func onWriteError(sequenceNumber: McuSequenceNumber, error: Error) {
         lockingQueue.async {
             self.state[sequenceNumber]?.writeLock.open(error)
         }

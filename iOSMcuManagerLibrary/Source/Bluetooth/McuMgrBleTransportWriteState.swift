@@ -15,8 +15,8 @@ typealias McuMgrBleTransportWrite = (sequenceNumber: McuSequenceNumber, writeLoc
 
 // MARK: - McuMgrBleTransportWriteState
 
-final class McuMgrBleTransportWriteState {
-    
+public class McuMgrBleTransportWriteState {
+
     // MARK: - Private Properties
     
     private let lockingQueue = DispatchQueue(label: "McuMgrBleTransportWriteState",

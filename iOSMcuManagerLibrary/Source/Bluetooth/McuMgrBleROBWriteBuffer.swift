@@ -19,7 +19,7 @@ import CoreBluetooth
  numbers are interleaved, it'll garble up the results and the firmware will not be able to
  understand anything.
  */
-internal final class McuMgrBleROBWriteBuffer {
+public class McuMgrBleROBWriteBuffer {
     
     /**
      The minimum amount of time we expect needs to elapse before the Write Without Response buffer is cleared in miliseconds.

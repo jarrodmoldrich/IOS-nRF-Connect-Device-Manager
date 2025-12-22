@@ -38,7 +38,7 @@ public class McuMgrBleTransport: NSObject {
     
     /// The CBCentralManager instance from which the peripheral was obtained.
     /// This is used to connect and cancel connection.
-    internal let centralManager: CBCentralManager
+    internal var centralManager: CBCentralManager
     /// The queue used to buffer requests when another one is in progress.
     private let operationQueue: OperationQueue
     /// Used to track multiple write requests and their responses.
@@ -49,7 +49,7 @@ public class McuMgrBleTransport: NSObject {
     internal lazy var robWriteBuffer = McuMgrBleROBWriteBuffer(logDelegate)
     
     /// Bare metal isn't supported in this fork so we only need one peripheral
-    internal let peripheral: CBPeripheral
+    internal var peripheral: CBPeripheral
     
     /// SMP Characteristic object. Used to write requests and receive
     /// notifications.
@@ -169,11 +169,20 @@ public class McuMgrBleTransport: NSObject {
 
     /// Call this to notify observers that the connection was lost.
     /// Should be called when the peripheral disconnects.
-    public func notifyDisconnected() {
-        previousUpdateNotificationSequenceNumber = nil
-        writeState = McuMgrBleTransportWriteState()
-        robWriteBuffer = McuMgrBleROBWriteBuffer(logDelegate)
+    public func didDisconnect() {
+        softReset()
         notifyStateChanged(.disconnected)
+    }
+    
+    /// Signal reconnection to transport.  Peripheral, CentralManager, and characteristic instances
+    /// may have changed so they should be resupplied.  This should be signalled after the
+    /// SMP service has been re-enumerated
+    public func didReconnect(peripheral: CBPeripheral, centralManager: CBCentralManager, smpCharacteristic: CBCharacteristic) {
+        self.peripheral = peripheral
+        self.centralManager = centralManager
+        self.smpCharacteristic = smpCharacteristic
+        softReset()
+        notifyStateChanged(.connected)
     }
 }
 

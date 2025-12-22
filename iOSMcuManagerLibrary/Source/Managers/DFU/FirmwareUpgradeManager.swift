@@ -1016,43 +1016,9 @@ public class FirmwareUpgradeManager: FirmwareUpgradeController, ConnectionObserv
         transport.removeObserver(self)
         
         // Disregard connected state.
-        guard state == .disconnected else { return }
+        guard state == .connected else { return }
         
-        if resetBootloaderName != nil, imageManager.transport.mode == .alternate {
-            do {
-                log(msg: "Switching transport back to Default Mode...", atLevel: .debug)
-                try imageManager.transport.switchMode(to: .default, with: nil)
-            } catch {
-                fail(error: error)
-                return
-            }
-        }
-        
-        log(msg: "Device disconnected.", atLevel: .info)
-        let timeSinceReset: TimeInterval
-        if let resetResponseTime = resetResponseTime {
-            let now = Date()
-            timeSinceReset = now.timeIntervalSince(resetResponseTime)
-        } else {
-            // Fallback if state changed prior to `resetResponseTime` is set.
-            timeSinceReset = 0
-        }
-        let remainingTime = configuration.estimatedSwapTime - timeSinceReset
-        
-        // If DirectXIP, regardless of variant, there's no swap time. So we try to reconnect
-        // immediately.
-        let waitForReconnectRequired = !configuration.bootloaderMode.isDirectXIP
-            && remainingTime > .leastNonzeroMagnitude
-        guard waitForReconnectRequired else {
-            reconnect()
-            return
-        }
-        
-        log(msg: "Waiting \(Int(configuration.estimatedSwapTime)) seconds before reconnect attempt...", atLevel: .info)
-        DispatchQueue.main.asyncAfter(deadline: .now() + remainingTime) { [weak self] in
-            self?.log(msg: "Reconnecting...", atLevel: .info)
-            self?.reconnect()
-        }
+        handleReconnection()
     }
     
     private lazy var firmwareLoaderFinderCallback: FirmwareUpgradePeripheralFinder.FindCallback = { [weak self] result in
@@ -1082,38 +1048,23 @@ public class FirmwareUpgradeManager: FirmwareUpgradeController, ConnectionObserv
     }
     
     /// Reconnect to the device and continue the
-    private func reconnect() {
-        imageManager.transport.connect { [weak self] result in
-            guard let self else { return }
-            
-            switch result {
-            case .connected:
-                self.log(msg: "Reconnect successful", atLevel: .info)
-            case .deferred:
-                self.log(msg: "Reconnect deferred", atLevel: .info)
-            case .failed(let error):
-                self.log(msg: "Reconnect failed: \(error)", atLevel: .error)
-                self.fail(error: error)
-                return
-            }
-            
-            // Continue the upgrade after reconnect.
-            switch self.state {
-            case .requestMcuMgrParameters:
-                self.requestMcuMgrParameters()
-            case .validate:
-                self.validate()
-            case .reset:
-                switch self.configuration.upgradeMode {
-                case .testAndConfirm:
-                    self.listAfterUploadReset()
-                default:
-                    self.log(msg: "Upgrade complete", atLevel: .application)
-                    self.success()
-                }
+    private func handleReconnection() {
+        // Continue the upgrade after reconnect.
+        switch self.state {
+        case .requestMcuMgrParameters:
+            self.requestMcuMgrParameters()
+        case .validate:
+            self.validate()
+        case .reset:
+            switch self.configuration.upgradeMode {
+            case .testAndConfirm:
+                self.listAfterUploadReset()
             default:
-                break
+                self.log(msg: "Upgrade complete", atLevel: .application)
+                self.success()
             }
+        default:
+            break
         }
     }
     

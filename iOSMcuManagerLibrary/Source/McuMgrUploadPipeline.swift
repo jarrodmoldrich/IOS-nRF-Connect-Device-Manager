@@ -26,7 +26,7 @@ public struct McuMgrUploadPipeline {
         self.bufferSize = configuration.reassemblyBufferSize
         self.lastReceivedOffset = 0
         
-        if let bleTransport = transport as? McuMgrBleTransportProtocol {
+        if let bleTransport = transport as? McuMgrBleTransport {
             bleTransport.numberOfParallelWrites = depth
             bleTransport.chunkSendDataToMtuSize = bufferSize != 0 // && bufferSize > mtu ?
         }

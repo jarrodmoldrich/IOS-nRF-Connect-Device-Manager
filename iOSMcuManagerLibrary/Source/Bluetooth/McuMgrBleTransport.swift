@@ -32,43 +32,15 @@ public protocol PeripheralDelegate: AnyObject {
     func peripheral(_ peripheral: CBPeripheral, didChangeStateTo state: PeripheralState)
 }
 
-// MARK: - McuMgrBleTransportProtocol
-
-/// Protocol exposing the BLE-specific transport properties used by other parts of the library.
-/// Extends `McuMgrTransport` to include BLE-specific functionality.
-public protocol McuMgrBleTransportProtocol: McuMgrTransport {
-    
-    /// The CBCentralManager instance from which the peripheral was obtained.
-    /// Used for operations like scanning for peripherals after reset.
-    var centralManager: CBCentralManager { get }
-    
-    /// Set to values larger than 1 to enable Parallel Writes.
-    ///
-    /// Features like SMP Pipelining are based on the concept of multiple packet transmissions happening
-    /// at the same time and waiting for their responses as they're received.
-    var numberOfParallelWrites: Int { get set }
-    
-    /// Enable when calling ``send(data: Data, timeout: Int, callback: @escaping McuMgrCallback<T>)``
-    /// with `Data` values larger than MTU Size, such as when SMP Reassembly feature is enabled.
-    ///
-    /// If the Data being sent is larger than the MTU Size, this property should be enabled so it's cut-down
-    /// to MTU Size so as to keep within each transmission packet's maximum (MTU) size limit.
-    var chunkSendDataToMtuSize: Bool { get set }
-}
-
 // MARK: - McuMgrBleTransport
 
-public class McuMgrBleTransport: NSObject, McuMgrBleTransportProtocol {
+public class McuMgrBleTransport: NSObject {
     
     /// The CBCentralManager instance from which the peripheral was obtained.
     /// This is used to connect and cancel connection.
-    public let centralManager: CBCentralManager
+    internal let centralManager: CBCentralManager
     /// The queue used to buffer requests when another one is in progress.
     private let operationQueue: OperationQueue
-    /// Lock used to wait for callbacks before continuing the request. This lock
-    /// is used to wait for the device to setup (i.e. connection, descriptor)
-    /// and the device to be received.
-    internal let connectionLock: ResultLock
     /// Used to track multiple write requests and their responses.
     internal var writeState: McuMgrBleTransportWriteState
     /// Used to track the Sequence Number the chunked responses belong to.
@@ -76,12 +48,8 @@ public class McuMgrBleTransport: NSObject, McuMgrBleTransportProtocol {
     
     internal lazy var robWriteBuffer = McuMgrBleROBWriteBuffer(logDelegate)
     
-    internal let configuration: McuMgrBleTransport.Configuration
-    
-    /// There's no longer a @peripheral property. Instead, since we had to add
-    /// the modes, we store ``CBPeripheral``s in a dictionary we query based
-    /// on the current ``mode``.
-    internal var modePeripherals: [McuMgrTransportMode: CBPeripheral]
+    /// Bare metal isn't supported in this fork so we only need one peripheral
+    internal let peripheral: CBPeripheral
     
     /// SMP Characteristic object. Used to write requests and receive
     /// notifications.
@@ -93,26 +61,14 @@ public class McuMgrBleTransport: NSObject, McuMgrBleTransportProtocol {
         }
     }
     
-    /// Mode of operation.
-    ///
-    /// In the case of ``McuMgrBleTransport``, we've hijacked
-    /// it to represent targeted ``CBPeripheral``. This is because for resets into
-    /// Firmware Loader mode, the same physical device is represented by a different
-    /// ``CBPeripheral``. Since the ``McuMgrTransport`` handles transport, we had
-    /// to extend the API in some way, whilst trying to keep it flexible for other
-    /// methods of transport. As well as to attempt to provide some semblance of consistency.
-    public private(set) var mode: McuMgrTransportMode
+    // Fork does not support bare metal
+    public var mode: McuMgrTransportMode {
+        return .default
+    }
     
     /// An array of observers.
     private var observers: [ConnectionObserver]
-    /// BLE transport delegate.
-    public weak var delegate: PeripheralDelegate? {
-        didSet {
-            DispatchQueue.main.async {
-                self.notifyPeripheralDelegate()
-            }
-        }
-    }
+
     /// The log delegate will receive transport logs.
     public weak var logDelegate: McuMgrLogDelegate?
     
@@ -139,103 +95,85 @@ public class McuMgrBleTransport: NSObject, McuMgrBleTransportProtocol {
     /// to MTU Size so as to keep within each transmission packet's maximum (MTU) size limit. Otherwise, it's
     /// likely that CoreBluetooth will not send the Data.
     public var chunkSendDataToMtuSize: Bool = false
-    
-    public internal(set) var state: PeripheralState = .disconnected {
-        didSet {
-            DispatchQueue.main.async {
-                self.notifyPeripheralDelegate()
-            }
-        }
-    }
-    
-    // MARK: init
 
-    /// Creates a BLE transport object for the given peripheral.
-    /// The implementation will create internal instance of
-    /// CBCentralManager, and will retrieve the CBPeripheral from it.
-    /// The target given as a parameter will not be used.
-    /// The CBCentralManager from which the target was obtained will not
-    /// be notified about connection states.
+    /// Creates a transport using a pre-established managed connection.
     ///
-    /// The peripheral will connect automatically if a request to it is
-    /// made. To disconnect from the peripheral, call `close()`.
-    ///
-    /// - parameter target: The BLE peripheral with Simple Management
-    ///   Protocol (SMP) service.
-    /// - parameter uuidConfig: A custom UUID configuration.
-    public convenience init(_ peripheral: CBPeripheral, _ configuration: Configuration? = nil) {
-        self.init(
-            peripheral, peripheral.identifier,
-            CBCentralManager(delegate: nil, queue: .global(qos: .userInitiated)),
-            configuration ?? DefaultTransportConfiguration()
-        )
-    }
-
-    /// Creates a BLE transport object for the peripheral matching given
-    /// identifier. The implementation will create internal instance of
-    /// CBCentralManager, and will retrieve the CBPeripheral from it.
-    /// The target given as a parameter will not be used.
-    /// The CBCentralManager from which the target was obtained will not
-    /// be notified about connection states.
-    ///
-    /// The peripheral will connect automatically if a request to it is
-    /// made. To disconnect from the peripheral, call `close()`.
-    ///
-    /// - parameter targetIdentifier: The UUID of the peripheral with Simple Management
-    ///   Protocol (SMP) service.
-    /// - parameter uuidConfig: A custom UUID configuration
-    public convenience init(_ targetIdentifier: UUID, _ configuration: Configuration? = nil) {
-        let centralManager = CBCentralManager(delegate: nil, queue: .global(qos: .userInitiated))
-        let peripheral = centralManager.retrievePeripherals(withIdentifiers: [targetIdentifier]).first //can return nil oddly enough
-
-        self.init(peripheral, targetIdentifier, centralManager,
-                  configuration ?? DefaultTransportConfiguration())
-    }
-
-    private init(_ peripheral: CBPeripheral?, _ targetIdentifier: UUID, _ centralManager: CBCentralManager, _ configuration: Configuration) {
+    /// - Parameters:
+    ///   - peripheral: The connected CBPeripheral
+    ///   - centralManager: The CBCentralManager
+    ///   - smpCharacteristic: The discovered SMP characteristic with notifications enabled
+    public init(
+        peripheral: CBPeripheral,
+        centralManager: CBCentralManager,
+        smpCharacteristic: CBCharacteristic
+    ) {
+        self.peripheral = peripheral
         self.centralManager = centralManager
-        self.identifier = targetIdentifier
-        self.connectionLock = ResultLock(isOpen: false)
+        self.smpCharacteristic = smpCharacteristic
         self.writeState = McuMgrBleTransportWriteState()
         self.observers = []
         self.operationQueue = OperationQueue()
         self.operationQueue.qualityOfService = .userInitiated
         self.operationQueue.maxConcurrentOperationCount = 1
-        self.configuration = configuration
-        self.mode = .default
-        self.modePeripherals = [:]
+
         super.init()
 
-        self.centralManager.delegate = self
-        if let peripheral {
-            modePeripherals[mode] = peripheral
-        }
-        
-        self.mtu = {
-            let defaultMtu = McuManager.getDefaultMtu(scheme: getScheme())
-            guard let peripheral else {
-                return defaultMtu
-            }
-            
-            // Note that it is 99.9% likely that this is the wrong value unless
-            // we're already connected. A valid MTU value needs to be set in
-            // the _send() function just after acquiring the (Result)Lock.
-            let peripheralWriteValueLength = max(McuManager.ValidMTURange.lowerBound, peripheral.maximumWriteValueLength(for: .withoutResponse))
-            return min(peripheralWriteValueLength, defaultMtu)
-        }()
-    }
-    
-    public var name: String? {
-        return modePeripherals[mode]?.name
-    }
-    
-    public private(set) var identifier: UUID
+        // Set MTU based on peripheral's negotiated value
+        let negotiatedMTU = peripheral.maximumWriteValueLength(for: .withoutResponse)
+        let defaultMtu = McuManager.getDefaultMtu(scheme: .ble)
+        self.mtu = min(negotiatedMTU, defaultMtu)
 
-    // MARK: notifyPeripheralDelegate
-    
-    private func notifyPeripheralDelegate() {
-        guard let delegate, let peripheral = modePeripherals[mode] else { return }
-        delegate.peripheral(peripheral, didChangeStateTo: state)
+        log(msg: "McuMgrBleTransport initialized with MTU: \(self.mtu!)", atLevel: .info)
+    }
+
+    /// Called when an SMP characteristic notification is received.
+    /// This forwards the data to the write state machine to complete pending operations.
+    ///
+    /// - Parameters:
+    ///   - data: The notification data
+    ///   - error: Any error from the notification
+    public func handleNotification(data: Data?, error: Error?) {
+        if let error = error {
+            writeState.onError(error)
+            return
+        }
+
+        guard let data = data else {
+            writeState.onError(McuMgrTransportError.badResponse)
+            return
+        }
+
+        // Check if this is a continuation of a previous chunked response
+        if let previousSeq = previousUpdateNotificationSequenceNumber,
+           !writeState.isChunkComplete(for: previousSeq) {
+            writeState.received(sequenceNumber: previousSeq, data: data)
+            return
+        }
+
+        // New response - extract sequence number from header
+        guard let sequenceNumber = data.readMcuMgrHeaderSequenceNumber() else {
+            writeState.onError(McuMgrTransportError.badResponse)
+            return
+        }
+
+        previousUpdateNotificationSequenceNumber = sequenceNumber
+        writeState.received(sequenceNumber: sequenceNumber, data: data)
+    }
+
+    /// Called when the peripheral is ready to accept more writes.
+    ///
+    /// - Parameter peripheral: The peripheral that is ready
+    public func handlePeripheralReadyToWrite(_ peripheral: CBPeripheral) {
+        robWriteBuffer.peripheralReadyToWrite(peripheral)
+    }
+
+    /// Call this to notify observers that the connection was lost.
+    /// Should be called when the peripheral disconnects.
+    public func notifyDisconnected() {
+        previousUpdateNotificationSequenceNumber = nil
+        writeState = McuMgrBleTransportWriteState()
+        robWriteBuffer = McuMgrBleROBWriteBuffer(logDelegate)
+        notifyStateChanged(.disconnected)
     }
 }
 
@@ -248,30 +186,14 @@ extension McuMgrBleTransport: McuMgrTransport {
     }
     
     public func switchMode(to newMode: McuMgrTransportMode, with modeParameter: Any?) throws {
-        guard mode != newMode else {
-            throw McuMgrBleTransportError.alreadyInRequestedMode
-        }
-        
-        guard modePeripherals[mode]?.state == .disconnected else {
-            throw McuMgrBleTransportError.modeSwitchRequestedWithPeripheralStillConnected
-        }
-        
-        didDisconnect()
-        softReset()
-        if let modePeripheral = modeParameter as? CBPeripheral {
-            modePeripherals[newMode] = modePeripheral
-        }
-        
-        guard let newPeripheral = modePeripherals[newMode] else {
-            throw McuMgrBleTransportError.modeSwitchRequestedWithoutPeripheral
-        }
-        mode = newMode
-        identifier = newPeripheral.identifier
-        log(msg: "Successfully switched to \(mode) mode.", atLevel: .debug)
+        // Fork does not support bare metal / bootloader mode switching
+        throw McuMgrBleTransportError.alreadyInRequestedMode
     }
     
     public func send<T: McuMgrResponse>(data: Data, timeout: Int, callback: @escaping McuMgrCallback<T>) {
-        operationQueue.addOperation {
+        operationQueue.addOperation { [weak self] in
+            guard let self = self else { return }
+
             for i in 0..<McuMgrBleTransportConstant.MAX_RETRIES {
                 switch self._send(data: data, timeoutInSeconds: timeout) {
                 case .failure(McuMgrTransportError.waitAndRetry):
@@ -322,12 +244,7 @@ extension McuMgrBleTransport: McuMgrTransport {
     }
     
     public func close() {
-        if let peripheral = modePeripherals[mode],
-           peripheral.state == .connected || peripheral.state == .connecting {
-            log(msg: "Cancelling connection...", atLevel: .verbose)
-            state = .disconnecting
-            centralManager.cancelPeripheralConnection(peripheral)
-        }
+        log(msg: "close() called - connection managed externally", atLevel: .debug)
     }
     
     public func addObserver(_ observer: ConnectionObserver) {
@@ -361,108 +278,28 @@ extension McuMgrBleTransport: McuMgrTransport {
         robWriteBuffer = McuMgrBleROBWriteBuffer(logDelegate)
     }
     
-    internal func didDisconnect() {
-        modePeripherals[mode]?.delegate = nil
-        smpCharacteristic = nil
-        connectionLock.open(McuMgrTransportError.disconnected)
-        state = .disconnected
-    }
-    
     /// This method sends the data to the target. Before, it ensures that
     /// CBCentralManager is ready and the peripheral is connected.
     /// The peripheral will automatically be connected when it's not.
     ///
     /// - returns: A `Result` containing the full response `Data` if successful, `Error` if not. Note that if `McuMgrTransportError.waitAndRetry` is returned, said operation needs to be done externally to this call.
     private func _send(data: Data, timeoutInSeconds: Int) -> Result<Data, Error> {
-        if centralManager.state == .poweredOff || centralManager.state == .unsupported {
+        // Verify peripheral is still connected
+        guard peripheral.state == .connected else {
+            return .failure(McuMgrTransportError.disconnected)
+        }
+
+        // Verify central manager is powered on
+        guard centralManager.state == .poweredOn else {
             return .failure(McuMgrBleTransportError.centralManagerPoweredOff)
         }
 
-        // We might not have a peripheral instance yet, if the Central Manager has not
-        // reported that it is powered on.
-        // Wait until it is ready, and timeout if we do not get a valid peripheral instance
-        let targetPeripheral: CBPeripheral
-
-        if let existing = modePeripherals[mode], centralManager.state == .poweredOn {
-            targetPeripheral = existing
-        } else {
-            connectionLock.close(key: McuMgrBleTransportKey.awaitingCentralManager.rawValue)
-            
-            // Wait for the setup process to complete.
-            let result = connectionLock.block(timeout: DispatchTime.now() + .seconds(McuMgrBleTransportConstant.CONNECTION_TIMEOUT))
-            
-            switch result {
-            case let .failure(error):
-                return .failure(error)
-            case .success:
-                guard let target = modePeripherals[mode] else {
-                    return .failure(McuMgrTransportError.connectionTimeout)
-                }
-                // continue
-                log(msg: "Central Manager ready", atLevel: .info)
-                targetPeripheral = target
-            }
-        }
-        
-        // Wait until the peripheral is ready.
-        if smpCharacteristic == nil {
-            // Close the lock.
-            connectionLock.close(key: McuMgrBleTransportKey.discoveringSmpCharacteristic.rawValue)
-            
-            switch targetPeripheral.state {
-            case .connected:
-                // If the peripheral was already connected, but the SMP
-                // characteristic has not been set, start by performing service
-                // discovery. Once the characteristic's notification is enabled,
-                // the semaphore will be signaled and the request can be sent.
-                log(msg: "Peripheral already connected", atLevel: .info)
-                log(msg: "Discovering services...", atLevel: .verbose)
-                state = .connecting
-                targetPeripheral.delegate = self
-                targetPeripheral.discoverServices([configuration.characteristicUUUID])
-            case .disconnected:
-                // If the peripheral is disconnected, begin the setup process by
-                // connecting to the device. Once the characteristic's
-                // notification is enabled, the semaphore will be signaled and
-                // the request can be sent.
-                log(msg: "Connecting...", atLevel: .verbose)
-                state = .connecting
-                centralManager.connect(targetPeripheral)
-            case .connecting:
-                log(msg: "Device is connecting...", atLevel: .info)
-                state = .connecting
-                // Do nothing. It will switch to .connected or .disconnected.
-            case .disconnecting:
-                log(msg: "Device is disconnecting...", atLevel: .info)
-                // If the peripheral's connection state is transitioning, wait and retry
-                return .failure(McuMgrTransportError.waitAndRetry)
-            @unknown default:
-                log(msg: "Unknown state", atLevel: .warning)
-            }
-            
-            // Wait for the setup process to complete.
-            let result = connectionLock.block(timeout: DispatchTime.now() + .seconds(McuMgrBleTransportConstant.CONNECTION_TIMEOUT))
-            
-            switch result {
-            case let .failure(error):
-                state = .disconnected
-                return .failure(error)
-            case .success:
-                log(msg: "Device ready", atLevel: .info)
-            }
-        }
-        
-        assert(connectionLock.isOpen)
-        
-        // Make sure the SMP characteristic is not nil.
-        guard let smpCharacteristic else {
-            return .failure(McuMgrBleTransportError.missingCharacteristic)
-        }
-        
+        // Extract sequence number from data
         guard let sequenceNumber = data.readMcuMgrHeaderSequenceNumber() else {
             return .failure(McuMgrTransportError.badHeader)
         }
         
+        // Create a lock for this write operation
         let writeLock = ResultLock(isOpen: false)
         writeLock.close()
         writeState.newWrite(sequenceNumber: sequenceNumber, lock: writeLock)
@@ -475,7 +312,7 @@ extension McuMgrBleTransport: McuMgrTransport {
         }
         
         // Don't be smart caching the MTU.
-        let negotiatedMTU = targetPeripheral.maximumWriteValueLength(for: .withoutResponse)
+        let negotiatedMTU = peripheral.maximumWriteValueLength(for: .withoutResponse)
         // It's possible an upper-layer has set a non-max MTU. Either by mistake, or by design.
         // We only want to force the MTU value to change if the current value causes issues.
         if mtu > negotiatedMTU {
@@ -500,12 +337,12 @@ extension McuMgrBleTransport: McuMgrTransport {
                 return .failure(error)
             }
             
-            robWriteBuffer.enqueue(sequenceNumber, data: dataChunks, to: targetPeripheral, characteristic: smpCharacteristic) { [weak self] chunk, error in
-                if let error {
+            robWriteBuffer.enqueue(sequenceNumber, data: dataChunks, to: peripheral, characteristic: smpCharacteristic!) { [weak self] chunk, error in
+                if let error = error {
                     writeLock.open(error)
                     return
                 }
-                if let chunk {
+                if let chunk = chunk {
                     self?.log(msg: "-> [Seq: \(sequenceNumber)] \(chunk.hexEncodedString(options: [.upperCase, .twoByteSpacing])) (\(chunk.count) bytes)", atLevel: .debug)
                 }
             }
@@ -517,14 +354,14 @@ extension McuMgrBleTransport: McuMgrTransport {
                 writeState.open(sequenceNumber: sequenceNumber, dueTo: error)
                 return .failure(error)
             }
-            
-            robWriteBuffer.enqueue(sequenceNumber, data: [data], to: targetPeripheral, characteristic: smpCharacteristic) { [weak self] data, error in
-                if let error {
+
+            robWriteBuffer.enqueue(sequenceNumber, data: [data], to: peripheral, characteristic: smpCharacteristic!) { [weak self] chunk, error in
+                if let error = error {
                     writeLock.open(error)
                     return
                 }
-                if let data {
-                    self?.log(msg: "-> [Seq: \(sequenceNumber)] \(data.hexEncodedString(options: [.upperCase, .twoByteSpacing])) (\(data.count) bytes)", atLevel: .debug)
+                if let chunk = chunk {
+                    self?.log(msg: "-> [Seq: \(sequenceNumber)] \(chunk.hexEncodedString(options: [.upperCase, .twoByteSpacing])) (\(chunk.count) bytes)", atLevel: .debug)
                 }
             }
         }
@@ -535,13 +372,10 @@ extension McuMgrBleTransport: McuMgrTransport {
         switch result {
         case .failure(McuMgrTransportError.sendTimeout):
             guard !robWriteBuffer.isInFlight(sequenceNumber) else {
-                writeLock.open(McuMgrTransportError.peripheralNotReadyForWriteWithoutResponse)
                 return .failure(McuMgrTransportError.peripheralNotReadyForWriteWithoutResponse)
             }
-            writeLock.open(McuMgrTransportError.waitAndRetry)
             return .failure(McuMgrTransportError.waitAndRetry)
         case .failure(let error):
-            writeLock.open(error)
             return .failure(error)
         case .success:
             guard let returnData = writeState[sequenceNumber]?.chunk else {

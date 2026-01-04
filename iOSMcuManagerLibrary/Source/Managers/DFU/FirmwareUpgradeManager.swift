@@ -2,6 +2,8 @@
  * Copyright (c) 2017-2018 Runtime Inc.
  *
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * Modified by Jarrod Moldrich, 2026
  */
 
 import Foundation

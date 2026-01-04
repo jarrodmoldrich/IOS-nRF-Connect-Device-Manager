@@ -5,6 +5,8 @@
 //  Created by Dinesh Harjani on 4/11/25.
 //  Copyright © 2025 Nordic Semiconductor ASA. All rights reserved.
 //
+//  Modified by Jarrod Moldrich, 2026
+//
 
 import Foundation
 import Combine

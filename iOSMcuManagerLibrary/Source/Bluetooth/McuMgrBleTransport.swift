@@ -204,28 +204,26 @@ extension McuMgrBleTransport: McuMgrTransport {
     public func send<T: McuMgrResponse>(data: Data, timeout: Int, callback: @escaping McuMgrCallback<T>) {
         let operation = BlockOperation()
         operation.addExecutionBlock { [weak self, weak operation] in
-            guard let `self` = self else { return }
-
             for i in 0..<McuMgrBleTransportConstant.MAX_RETRIES {
                 if operation?.isCancelled != false { return }
-                let result = self._send(data: data, timeoutInSeconds: timeout)
+                let result = self?._send(data: data, timeoutInSeconds: timeout)
                 if operation?.isCancelled != false { return }
                 switch result {
                 case .failure(McuMgrTransportError.waitAndRetry):
                     let waitInterval = min(timeout, McuMgrBleTransportConstant.WAIT_AND_RETRY_INTERVAL)
                     sleep(UInt32(waitInterval))
                     if let header = try? McuMgrHeader(data: data) {
-                        self.log(msg: "Retry \(i + 1) for seq: \(header.sequenceNumber)", atLevel: .info)
+                        self?.log(msg: "Retry \(i + 1) for seq: \(header.sequenceNumber)", atLevel: .info)
                     } else {
-                        self.log(msg: "Retry \(i + 1) (Unknown Header Type)", atLevel: .info)
+                        self?.log(msg: "Retry \(i + 1) (Unknown Header Type)", atLevel: .info)
                     }
                 case .failure(McuMgrTransportError.peripheralNotReadyForWriteWithoutResponse):
                     if let header = try? McuMgrHeader(data: data) {
-                        self.log(msg: "(Retry \(i + 1)) Peripheral not ready for write without response. Attempting to wait or send seq: \(header.sequenceNumber)", atLevel: .debug)
+                        self?.log(msg: "(Retry \(i + 1)) Peripheral not ready for write without response. Attempting to wait or send seq: \(header.sequenceNumber)", atLevel: .debug)
                     }
                     continue // try to send again or wait for a response
                 case .failure(let error):
-                    self.log(msg: error.localizedDescription, atLevel: .error)
+                    self?.log(msg: error.localizedDescription, atLevel: .error)
                     DispatchQueue.main.async {
                         callback(nil, error)
                     }
@@ -237,12 +235,14 @@ extension McuMgrBleTransport: McuMgrTransport {
                             callback(response, nil)
                         }
                     } catch {
-                        self.log(msg: error.localizedDescription, atLevel: .error)
+                        self?.log(msg: error.localizedDescription, atLevel: .error)
                         DispatchQueue.main.async {
                             callback(nil, error)
                         }
                     }
                     return
+                default:
+                    break
                 }
             }
             

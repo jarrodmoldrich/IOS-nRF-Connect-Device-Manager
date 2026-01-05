@@ -202,11 +202,16 @@ extension McuMgrBleTransport: McuMgrTransport {
     }
     
     public func send<T: McuMgrResponse>(data: Data, timeout: Int, callback: @escaping McuMgrCallback<T>) {
-        operationQueue.addOperation { [weak self] in
-            guard let self = self else { return }
+        let operation = BlockOperation()
+        operation.addExecutionBlock { [weak self, weak operation] in
+            guard let `self` = self else { return }
+            guard let `operation` = operation else { return }
 
             for i in 0..<McuMgrBleTransportConstant.MAX_RETRIES {
-                switch self._send(data: data, timeoutInSeconds: timeout) {
+                if operation.isCancelled { return }
+                let result = self._send(data: data, timeoutInSeconds: timeout)
+                if operation.isCancelled { return }
+                switch result {
                 case .failure(McuMgrTransportError.waitAndRetry):
                     let waitInterval = min(timeout, McuMgrBleTransportConstant.WAIT_AND_RETRY_INTERVAL)
                     sleep(UInt32(waitInterval))
@@ -245,9 +250,13 @@ extension McuMgrBleTransport: McuMgrTransport {
             // Out of for-loop. No callback call was made.
             // If we made it here, all retries failed.
             DispatchQueue.main.async {
-                callback(nil, McuMgrTransportError.sendFailed)
+                if !operation.isCancelled {
+                    callback(nil, McuMgrTransportError.sendFailed)
+                }
             }
         }
+        
+        operationQueue.addOperation(operation)
     }
     
     public func connect(_ callback: @escaping ConnectionCallback) {
@@ -285,6 +294,7 @@ extension McuMgrBleTransport: McuMgrTransport {
      */
     internal func softReset() {
         previousUpdateNotificationSequenceNumber = nil
+        operationQueue.cancelAllOperations()
         writeState = McuMgrBleTransportWriteState()
         robWriteBuffer = McuMgrBleROBWriteBuffer(logDelegate)
     }

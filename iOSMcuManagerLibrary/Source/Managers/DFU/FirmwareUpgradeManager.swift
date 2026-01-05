@@ -127,7 +127,7 @@ public class FirmwareUpgradeManager: FirmwareUpgradeController, ConnectionObserv
                 log(msg: "Nothing to be uploaded", atLevel: .application)
                 // Allow Library Apps to show 100% Progress in this case.
                 DispatchQueue.main.async { [weak self] in
-                    self?.delegate?.uploadProgressDidChange(bytesSent: 100, imageSize: 100, 
+                    self?.delegate?.uploadProgressDidChange(bytesSent: 100, imageSize: 100,
                                                             timestamp: Date())
                 }
                 uploadDidFinish()

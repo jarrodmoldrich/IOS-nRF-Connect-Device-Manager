@@ -383,10 +383,13 @@ extension McuMgrBleTransport: McuMgrTransport {
         switch result {
         case .failure(McuMgrTransportError.sendTimeout):
             guard !robWriteBuffer.isInFlight(sequenceNumber) else {
+                writeLock.open(McuMgrTransportError.peripheralNotReadyForWriteWithoutResponse)
                 return .failure(McuMgrTransportError.peripheralNotReadyForWriteWithoutResponse)
             }
+            writeLock.open(McuMgrTransportError.waitAndRetry)
             return .failure(McuMgrTransportError.waitAndRetry)
         case .failure(let error):
+            writeLock.open(error)
             return .failure(error)
         case .success:
             guard let returnData = writeState[sequenceNumber]?.chunk else {

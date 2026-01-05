@@ -205,12 +205,11 @@ extension McuMgrBleTransport: McuMgrTransport {
         let operation = BlockOperation()
         operation.addExecutionBlock { [weak self, weak operation] in
             guard let `self` = self else { return }
-            guard let `operation` = operation else { return }
 
             for i in 0..<McuMgrBleTransportConstant.MAX_RETRIES {
-                if operation.isCancelled { return }
+                if operation?.isCancelled != false { return }
                 let result = self._send(data: data, timeoutInSeconds: timeout)
-                if operation.isCancelled { return }
+                if operation?.isCancelled != false { return }
                 switch result {
                 case .failure(McuMgrTransportError.waitAndRetry):
                     let waitInterval = min(timeout, McuMgrBleTransportConstant.WAIT_AND_RETRY_INTERVAL)
@@ -250,7 +249,7 @@ extension McuMgrBleTransport: McuMgrTransport {
             // Out of for-loop. No callback call was made.
             // If we made it here, all retries failed.
             DispatchQueue.main.async {
-                if !operation.isCancelled {
+                if operation?.isCancelled != false {
                     callback(nil, McuMgrTransportError.sendFailed)
                 }
             }
